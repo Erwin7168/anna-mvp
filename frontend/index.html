@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Anna — Je Virtuele Stijlist (MVP)</title>
+  <link rel="stylesheet" href="styles.css">
+  <meta name="description" content="Anna: Slim stylen. Nuchter advies. Meteen bestelbaar.">
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand">
+      <div class="avatar" aria-hidden="true">A</div>
+      <div>
+        <h1>Anna</h1>
+        <p class="tagline">Slim stylen. Nuchter advies. Meteen bestelbaar.</p>
+      </div>
+    </div>
+    <div class="actions">
+      <button id="settingsBtn" class="ghost">Instellingen</button>
+      <a class="ghost" href="https://example.com" target="_blank" rel="noopener" aria-label="Open project info">Info</a>
+    </div>
+  </header>
+
+  <main class="container">
+    <section id="chat" class="chat" aria-live="polite">
+      <div class="bubble anna">
+        <p>Hoi, ik ben <strong>Anna</strong> 👋 Wat wil je nu stylen: <em>werk, vrije tijd, event</em> of <em>dagelijks</em>?</p>
+      </div>
+    </section>
+
+    <form id="inputForm" class="input-row" autocomplete="off">
+      <input id="userInput" type="text" placeholder="Typ je antwoord…" aria-label="Jouw antwoord">
+      <button type="submit">Stuur</button>
+    </form>
+  </main>
+
+  <div id="settingsModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+    <div class="modal-card">
+      <h2 id="settingsTitle">Instellingen</h2>
+      <label class="stack">
+        <span>Back-end API URL</span>
+        <input id="apiBase" type="url" placeholder="http://localhost:8000" value="http://localhost:8000">
+      </label>
+      <label class="stack">
+        <span>SERPAPI API key (optioneel voor live-producten)</span>
+        <input id="serpKey" type="password" placeholder="••••••••">
+      </label>
+      <div class="modal-actions">
+        <button id="saveSettings">Opslaan</button>
+        <button id="closeSettings" class="ghost">Sluiten</button>
+      </div>
+      <p class="small">Anna is onafhankelijk: geen affiliate. Links zijn puur voor gemak.</p>
+    </div>
+  </div>
+
+  <template id="bubbleTemplate">
+    <div class="bubble">
+      <p></p>
+    </div>
+  </template>
+
+  <script src="app.js"></script>
+</body>
+</html>
