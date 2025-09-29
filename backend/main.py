@@ -1,4 +1,6 @@
 import os
+import re
+import urllib.parse
 import requests
 import uvicorn
 from fastapi import FastAPI
@@ -7,14 +9,14 @@ from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
 from dotenv import load_dotenv
 
-# Voor de demo-modus gebruiken we de bestaande engine
+# Demo-engine (fallback) uit de eerdere MVP
 from outfit_engine import generate_outfits as generate_demo, EngineConfig
 
 load_dotenv()
 
 app = FastAPI(title="Anna MVP API", version="0.1.0")
 
-# CORS (zodat je frontend op Netlify/localhost kan praten met deze backend)
+# CORS (frontend op Netlify/localhost mag praten met deze backend)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -23,7 +25,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --------- Datamodellen ---------
+# ---------- Datamodellen ----------
 class Intake(BaseModel):
     purpose: str = Field(..., description="werk, vrije tijd, event, dagelijks, etc.")
     styles: List[str] = Field(..., description="max 2 stijlen: minimalistisch, casual, klassiek, sportief, creatief")
@@ -46,40 +48,42 @@ class GenerateRequest(BaseModel):
     serpapi_api_key: Optional[str] = Field(None, description="optioneel: sleutel meesturen; leeg = servervariabele gebruiken")
     outfits_count: int = Field(3, description="aantal outfits (default 3)")
 
-# --------- Meta endpoint ---------
+# ---------- Meta ----------
 @app.get("/api/meta")
 def meta():
     key_env = os.getenv("SERPAPI_API_KEY", "")
     return {
         "has_serpapi": bool(key_env),
         "environment": "dev",
-        "version": "0.1.0"
+        "version": "0.1.0",
     }
 
-# --------- Generate endpoint ---------
+# ---------- Generate ----------
 @app.post("/api/generate")
 def generate(req: GenerateRequest):
-    # 1) sleutel: neem uit body, of anders van de server (Render env var)
+    # 1) sleutel: neem uit body, of anders van server (Render env var)
     env_key = os.getenv("SERPAPI_API_KEY") or ""
     key = (req.serpapi_api_key or "").strip() or env_key
 
-    # 2) modus: automatisch op basis van sleutel, tenzij expliciet gezet
+    # 2) modus: automatisch bepaald op basis van sleutel, tenzij expliciet gezet
     auto_mode = "serpapi" if key else "demo"
     mode = (req.mode or auto_mode).lower()
 
+    # intake -> dict (pydantic v2)
+    intake_dict = req.intake.model_dump()
+
     try:
         if mode == "serpapi" and key:
-            return generate_with_serpapi(req.intake.dict(), key, req.outfits_count)
+            return generate_with_serpapi(intake_dict, key, req.outfits_count)
         else:
-            # Demo-modus gebruikt de bestaande engine uit outfit_engine
             cfg = EngineConfig(mode="demo", serpapi_api_key=None, outfits_count=req.outfits_count)
-            return generate_demo(intake=req.intake.dict(), config=cfg)
+            return generate_demo(intake=intake_dict, config=cfg)
     except Exception:
-        # Veiligheidsnet: val terug op demo in geval van fout
+        # Veiligheidsnet: val terug op demo i.p.v. crashen
         cfg = EngineConfig(mode="demo", serpapi_api_key=None, outfits_count=req.outfits_count)
-        return generate_demo(intake=req.intake.dict(), config=cfg)
+        return generate_demo(intake=intake_dict, config=cfg)
 
-# --------- SERPAPI implementatie (live zoeken) ---------
+# ---------- SERPAPI implementatie (live zoeken) ----------
 def _alloc(budget: float):
     alloc = {
         "outer": budget * 0.25,
@@ -113,7 +117,7 @@ def _serp_search(q: str, gl: str, api_key: str, num: int = 12):
     params = {
         "engine": "google_shopping",
         "q": q,
-        "gl": gl.lower(),   # landcode: nl, be, de, fr, uk, us
+        "gl": gl.lower(),     # landcode: nl, be, de, fr, uk, us
         "hl": "nl",
         "num": num,
         "api_key": api_key,
@@ -122,7 +126,7 @@ def _serp_search(q: str, gl: str, api_key: str, num: int = 12):
     r.raise_for_status()
     return r.json().get("shopping_results", []) or []
 
-def _price_of(x):
+def _price_of(x: dict) -> float:
     p = x.get("extracted_price") or x.get("price") or 0
     try:
         return float(p)
@@ -139,15 +143,39 @@ def _pick_item(results: list, max_price: float):
     pool.sort(key=lambda r: abs(_price_of(r) - max_price))
     return pool[0]
 
+def _first_url(d: dict) -> Optional[str]:
+    # pak de eerste bruikbare URL uit het SerpAPI-resultaat
+    for k in ("link", "product_link", "product_page_url", "product_url", "source_url", "redirect_link", "url"):
+        v = d.get(k)
+        if isinstance(v, str) and v.strip():
+            return v
+    return None
+
+def _normalize_link(raw_url: Optional[str], title: str = "", merchant: str = "") -> str:
+    """Maak elke link klikbaar; geef anders een Google-zoeklink."""
+    if not raw_url or not str(raw_url).strip():
+        q = urllib.parse.quote_plus(f"{title} {merchant}".strip())
+        return f"https://www.google.com/search?q={q}"
+    url = str(raw_url).strip()
+    if url.startswith("//"):
+        return "https:" + url
+    if not re.match(r"^https?://", url):
+        return "https://" + url
+    return url
+
 def _map_item(cat: str, r: dict):
+    title = r.get("title", "—")
+    merchant = r.get("source") or r.get("seller") or ""
+    link = _normalize_link(_first_url(r), title, merchant)
+
     return {
         "category": cat,
-        "title": r.get("title", "—"),
+        "title": title,
         "price": round(_price_of(r), 2),
         "currency": r.get("currency") or "EUR",
-        "link": r.get("link") or "#",
+        "link": link,
         "image": r.get("thumbnail"),
-        "merchant": r.get("source") or r.get("seller") or "",
+        "merchant": merchant,
         "cheaper_alternative": None,
     }
 
@@ -158,7 +186,7 @@ def generate_with_serpapi(intake: dict, api_key: str, outfits_count: int = 3):
     palette = {"colors": (intake.get("favorite_colors") or ["navy", "white", "grey", "black", "stone"])}
 
     categories = ["outer", "top1", "top2", "bottom", "shoes", "tee", "accessory"]
-    cache = {}
+    cache: Dict[str, list] = {}
     outfits = []
 
     for n in range(outfits_count or 3):
@@ -172,12 +200,14 @@ def generate_with_serpapi(intake: dict, api_key: str, outfits_count: int = 3):
             if found:
                 item = _map_item(cat, found)
             else:
+                # Fallback: altijd een bruikbare link (Google-zoekopdracht)
+                search_url = "https://www.google.com/search?q=" + urllib.parse.quote_plus(_build_query(cat, intake))
                 item = {
                     "category": cat,
                     "title": "(geen resultaat gevonden — alternatief)",
                     "price": round(alloc[cat], 2),
                     "currency": "EUR",
-                    "link": "#",
+                    "link": search_url,
                     "image": None,
                     "merchant": "—",
                     "cheaper_alternative": None,
@@ -196,11 +226,11 @@ def generate_with_serpapi(intake: dict, api_key: str, outfits_count: int = 3):
         "allocation": alloc,
         "outfits": outfits,
         "explanation": "Producten gezocht via Google Shopping (SerpAPI) op jouw stijl, land en budget. Bij lege resultaten kies ik een veilig alternatief.",
-        "independent_note": "Anna is onafhankelijk: geen affiliate; links zijn puur gemak.",
+        "independent_note": "Anna is onafhankelijk — geen affiliate; links zijn puur gemak.",
         "country": intake.get("country") or "NL",
         "currency": outfits[0].get("currency", "EUR"),
     }
 
-# --------- lokaal starten ---------
+# ---------- lokaal starten ----------
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=int(os.getenv("PORT", "8000")), reload=True)
