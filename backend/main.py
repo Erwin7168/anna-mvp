@@ -9,12 +9,12 @@ from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
 from dotenv import load_dotenv
 
-# Demo-engine (fallback) uit de eerdere MVP
+# Demo-engine (fallback) uit de MVP
 from outfit_engine import generate_outfits as generate_demo, EngineConfig
 
 load_dotenv()
 
-app = FastAPI(title="Anna MVP API", version="0.1.0")
+app = FastAPI(title="Anna MVP API", version="0.2.0")
 
 # CORS (frontend op Netlify/localhost mag praten met deze backend)
 app.add_middleware(
@@ -55,22 +55,26 @@ def meta():
     return {
         "has_serpapi": bool(key_env),
         "environment": "dev",
-        "version": "0.1.0",
+        "version": "0.2.0",
     }
 
 # ---------- Generate ----------
 @app.post("/api/generate")
 def generate(req: GenerateRequest):
-    # 1) sleutel: neem uit body, of anders van server (Render env var)
+    # sleutel: neem uit body, of anders van server (Render env var)
     env_key = os.getenv("SERPAPI_API_KEY") or ""
     key = (req.serpapi_api_key or "").strip() or env_key
 
-    # 2) modus: automatisch bepaald op basis van sleutel, tenzij expliciet gezet
+    # modus: automatisch bepaald op basis van sleutel, tenzij expliciet gezet
     auto_mode = "serpapi" if key else "demo"
     mode = (req.mode or auto_mode).lower()
 
-    # intake -> dict (pydantic v2)
-    intake_dict = req.intake.model_dump()
+    # intake -> dict (Pydantic v2)
+    try:
+        intake_dict = req.intake.model_dump()
+    except Exception:
+        # fallback voor Pydantic v1
+        intake_dict = req.intake.dict()
 
     try:
         if mode == "serpapi" and key:
@@ -144,12 +148,27 @@ def _pick_item(results: list, max_price: float):
     return pool[0]
 
 def _first_url(d: dict) -> Optional[str]:
-    # pak de eerste bruikbare URL uit het SerpAPI-resultaat
-    for k in ("link", "product_link", "product_page_url", "product_url", "source_url", "redirect_link", "url"):
+    """
+    Kies bij voorkeur een directe winkel-URL i.p.v. Google Shopping.
+    We proberen meerdere velden en filteren google.com eruit als het kan.
+    """
+    fields = (
+        "link", "product_link", "product_page_url", "product_url",
+        "source_url", "redirect_link", "url"
+    )
+    candidates = []
+    for k in fields:
         v = d.get(k)
         if isinstance(v, str) and v.strip():
-            return v
-    return None
+            candidates.append(v.strip())
+    if not candidates:
+        return None
+    # 1) niet-Google domeinen eerst
+    for u in candidates:
+        if "google.com" not in u and "shopping.google" not in u:
+            return u
+    # 2) anders eerste kandidaat
+    return candidates[0]
 
 def _normalize_link(raw_url: Optional[str], title: str = "", merchant: str = "") -> str:
     """Maak elke link klikbaar; geef anders een Google-zoeklink."""
@@ -167,7 +186,6 @@ def _map_item(cat: str, r: dict):
     title = r.get("title", "—")
     merchant = r.get("source") or r.get("seller") or ""
     link = _normalize_link(_first_url(r), title, merchant)
-
     return {
         "category": cat,
         "title": title,
