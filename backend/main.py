@@ -14,7 +14,7 @@ from outfit_engine import generate_outfits as generate_demo, EngineConfig
 
 load_dotenv()
 
-app = FastAPI(title="Anna MVP API", version="0.2.0")
+app = FastAPI(title="Anna MVP API", version="0.3.0")
 
 # CORS (frontend op Netlify/localhost mag praten met deze backend)
 app.add_middleware(
@@ -55,7 +55,7 @@ def meta():
     return {
         "has_serpapi": bool(key_env),
         "environment": "dev",
-        "version": "0.2.0",
+        "version": "0.3.0",
     }
 
 # ---------- Generate ----------
@@ -69,11 +69,10 @@ def generate(req: GenerateRequest):
     auto_mode = "serpapi" if key else "demo"
     mode = (req.mode or auto_mode).lower()
 
-    # intake -> dict (Pydantic v2)
+    # intake -> dict (Pydantic v2 + fallback)
     try:
         intake_dict = req.intake.model_dump()
     except Exception:
-        # fallback voor Pydantic v1
         intake_dict = req.intake.dict()
 
     try:
@@ -182,10 +181,62 @@ def _normalize_link(raw_url: Optional[str], title: str = "", merchant: str = "")
         return "https://" + url
     return url
 
-def _map_item(cat: str, r: dict):
+def _resolve_direct_store_link(r: dict, api_key: str, gl: str, title: str, merchant: str) -> str:
+    """
+    Als we alleen een Google Shopping productlink hebben, haal een directe winkel-URL op
+    via de 'google_shopping_product' engine (sellers_results). Anders normaliseer de bestaande link.
+    """
+    # 1) eerst directe link als die er al is
+    u = _first_url(r)
+    if u and "google.com" not in u and "shopping.google" not in u:
+        return _normalize_link(u, title, merchant)
+
+    # 2) probeer via product_id naar verkopers te gaan
+    pid = r.get("product_id")
+    if not pid and u:
+        m = re.search(r"/product/(\d+)", u)
+        pid = m.group(1) if m else None
+
+    if pid:
+        try:
+            resp = requests.get(
+                "https://serpapi.com/search.json",
+                params={
+                    "engine": "google_shopping_product",
+                    "product_id": pid,
+                    "gl": gl.lower(),
+                    "hl": "nl",
+                    "api_key": api_key,
+                },
+                timeout=20,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            sellers = data.get("sellers_results") or []
+            # a) probeer verkoper die lijkt op merchant
+            if merchant:
+                m0 = merchant.lower().split()[0]
+                for s in sellers:
+                    link = s.get("link") or ""
+                    store = (s.get("source") or s.get("seller") or s.get("store") or "").lower()
+                    if m0 and (m0 in store or m0 in link.lower()):
+                        if link and "google.com" not in link:
+                            return _normalize_link(link, title, store or merchant)
+            # b) anders eerste niet-Google link
+            for s in sellers:
+                link = s.get("link")
+                if link and "google.com" not in link:
+                    return _normalize_link(link, title, s.get("source") or merchant)
+        except Exception:
+            pass
+
+    # 3) laatste redmiddel: Google-zoeklink
+    return _normalize_link(None, title, merchant)
+
+def _map_item(cat: str, r: dict, link_override: Optional[str] = None, merchant_override: Optional[str] = None):
     title = r.get("title", "—")
-    merchant = r.get("source") or r.get("seller") or ""
-    link = _normalize_link(_first_url(r), title, merchant)
+    merchant = merchant_override or r.get("source") or r.get("seller") or ""
+    link = link_override or _normalize_link(_first_url(r), title, merchant)
     return {
         "category": cat,
         "title": title,
@@ -216,7 +267,11 @@ def generate_with_serpapi(intake: dict, api_key: str, outfits_count: int = 3):
                 cache[q] = _serp_search(q, gl, api_key, num=12)
             found = _pick_item(cache[q], alloc[cat])
             if found:
-                item = _map_item(cat, found)
+                title = found.get("title", "")
+                merchant = found.get("source") or found.get("seller") or ""
+                # Probeer directe winkel-URL te forceren waar nodig
+                direct_link = _resolve_direct_store_link(found, api_key, gl, title, merchant)
+                item = _map_item(cat, found, link_override=direct_link, merchant_override=merchant)
             else:
                 # Fallback: altijd een bruikbare link (Google-zoekopdracht)
                 search_url = "https://www.google.com/search?q=" + urllib.parse.quote_plus(_build_query(cat, intake))
@@ -243,7 +298,7 @@ def generate_with_serpapi(intake: dict, api_key: str, outfits_count: int = 3):
         "palette": palette,
         "allocation": alloc,
         "outfits": outfits,
-        "explanation": "Producten gezocht via Google Shopping (SerpAPI) op jouw stijl, land en budget. Bij lege resultaten kies ik een veilig alternatief.",
+        "explanation": "Producten gezocht via Google Shopping (SerpAPI) op jouw stijl, land en budget. Waar nodig haal ik een directe winkel-URL op.",
         "independent_note": "Anna is onafhankelijk — geen affiliate; links zijn puur gemak.",
         "country": intake.get("country") or "NL",
         "currency": outfits[0].get("currency", "EUR"),
