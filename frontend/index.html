@@ -3,9 +3,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Anna — Je Virtuele Stijlist (MVP)</title>
+  <title>Anna — Je Virtuele Stijlist (LIVE)</title>
   <link rel="stylesheet" href="styles.css">
-  <meta name="description" content="Anna: Slim stylen. Nuchter advies. Meteen bestelbaar.">
+  <meta name="description" content="Anna: Slim stylen. Nuchter advies. Meteen bestelbaar. Altijd live via SerpAPI.">
 </head>
 <body>
   <header class="app-header">
@@ -17,43 +17,49 @@
       </div>
     </div>
     <div class="actions">
-      <button id="settingsBtn" class="ghost">Instellingen</button>
-      <a class="ghost" href="https://example.com" target="_blank" rel="noopener" aria-label="Open project info">Info</a>
+      <button id="settingsBtn" class="ghost" aria-haspopup="dialog" aria-controls="settingsModal">Instellingen</button>
+      <a class="ghost" href="#" aria-label="Info over deze demo" title="Info (komt later)">Info</a>
     </div>
   </header>
 
   <main class="container">
     <section id="chat" class="chat" aria-live="polite">
       <div class="bubble anna">
-        <p>Hoi, ik ben <strong>Anna</strong> 👋 Wat wil je nu stylen: <em>werk, vrije tijd, event</em> of <em>dagelijks</em>?</p>
+        <p>Hoi, ik ben <strong>Anna</strong> 👋 Wil je vooral makkelijk combineren voor <em>werk</em>, <em>vrije tijd</em>, een <em>event</em> of <em>dagelijks</em>?</p>
       </div>
     </section>
 
-    <form id="inputForm" class="input-row" autocomplete="off">
+    <form id="inputForm" class="input-row" autocomplete="off" aria-label="Chat invoer">
       <input id="userInput" type="text" placeholder="Typ je antwoord…" aria-label="Jouw antwoord">
-      <button type="submit">Stuur</button>
+      <button type="submit" aria-label="Verstuur bericht">Stuur</button>
     </form>
   </main>
 
+  <!-- Instellingen (client-side) -->
   <div id="settingsModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
     <div class="modal-card">
       <h2 id="settingsTitle">Instellingen</h2>
+
       <label class="stack">
         <span>Back-end API URL</span>
-        <input id="apiBase" type="url" placeholder="http://localhost:8000" value="http://localhost:8000">
+        <input id="apiBase" type="url" placeholder="https://anna-mvp.onrender.com" value="https://anna-mvp.onrender.com" aria-describedby="apiBaseHelp">
       </label>
+      <p id="apiBaseHelp" class="small">Het adres van de server waar Anna op draait.</p>
+
       <label class="stack">
-        <span>SERPAPI API key (optioneel voor live-producten)</span>
-        <input id="serpKey" type="password" placeholder="••••••••">
+        <span>SERPAPI key (server-side geregeld, uitgeschakeld)</span>
+        <input id="serpKey" type="password" placeholder="Server-side geregeld" disabled>
       </label>
+
       <div class="modal-actions">
         <button id="saveSettings">Opslaan</button>
         <button id="closeSettings" class="ghost">Sluiten</button>
       </div>
-      <p class="small">Anna is onafhankelijk: geen affiliate. Links zijn puur voor gemak.</p>
+      <p class="small">Anna draait altijd <strong>live via SerpAPI</strong>. Je sleutel staat veilig op de server.</p>
     </div>
   </div>
 
+  <!-- Template voor chat-bubbles -->
   <template id="bubbleTemplate">
     <div class="bubble">
       <p></p>
